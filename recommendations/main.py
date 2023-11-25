@@ -7,12 +7,25 @@ from fastapi import FastAPI
 
 from models import InteractEvent, RecommendationsResponse, NewItemsEvent
 from watched_filter import WatchedFilter
+from time import sleep
+import uvicorn
+
+def get_redis_connection():
+    for _ in range(10):
+        try:
+            redis_connection = redis.Redis('redis')
+        except redis.exceptions.ConnectionError:
+            print('redis is not ready yet')
+            sleep(2)
+            continue
+        return redis_connection
+
 
 app = FastAPI()
 
-redis_connection = redis.Redis('localhost')
+redis_connection = get_redis_connection()
 watched_filter = WatchedFilter()
-
+print('ready')
 unique_item_ids = set()
 EPSILON = 0.05
 
@@ -60,3 +73,7 @@ def get_recs(user_id: str):
 async def interact(request: InteractEvent):
     watched_filter.add(request.user_id, request.item_id)
     return 200
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=5001)

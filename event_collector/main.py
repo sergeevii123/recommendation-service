@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from models import InteractEvent
 from watched_filter import WatchedFilter
+import uvicorn
 
 app = FastAPI()
 watched_filter = WatchedFilter()
@@ -52,7 +53,7 @@ async def create_rabbitmq_exchange() -> AbstractRobustExchange:
     global _rabbitmq_exchange, _rabbitmq_connection
     if _rabbitmq_exchange is None or _rabbitmq_connection.is_closed:
         _rabbitmq_connection = await aio_pika.connect_robust(
-            "amqp://guest:guest@localhost/",  # Replace with your RabbitMQ server URL
+            "amqp://guest:guest@rabbitmq/", 
             loop=asyncio.get_event_loop()
         )
 
@@ -76,3 +77,6 @@ async def publish_message(message: Message):
         message,
         routing_key,
     )
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=5000)

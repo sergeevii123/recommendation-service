@@ -4,18 +4,32 @@ import os.path
 import time
 
 import aio_pika
+import aiormq
 import polars as pl
 import redis
 from aio_pika import Message
 
 redis_connection = redis.Redis('localhost')
 
+INTERACTIONS_FILE = 'data/interactions.csv'
+
+async def get_rabbitmq_connection():
+    for _ in range(10):
+        print('trying to connect to rabbitmq')
+        try:
+            connection = await aio_pika.connect_robust(
+                "amqp://guest:guest@rabbitmq/",
+                loop=asyncio.get_event_loop()
+            )
+        except aiormq.exceptions.AMQPConnectionError as e:
+            print('rabbitmq is not ready yet')
+            await asyncio.sleep(2)
+            continue
+        print('rabbitmq is connected')
+        return connection
 
 async def collect_messages():
-    connection = await aio_pika.connect_robust(
-        "amqp://guest:guest@127.0.0.1/",
-        loop=asyncio.get_event_loop()
-    )
+    connection = await get_rabbitmq_connection()
 
     queue_name = "user_interactions"
     routing_key = "user.interact.message"
@@ -50,11 +64,11 @@ async def collect_messages():
                         })
 
                         if len(new_data) > 0:
-                            if os.path.exists('../data/interactions.csv'):
-                                data = pl.concat([pl.read_csv('../data/interactions.csv'), new_data])
+                            if os.path.exists(INTERACTIONS_FILE):
+                                data = pl.concat([pl.read_csv(INTERACTIONS_FILE), new_data])
                             else:
                                 data = new_data
-                            data.write_csv('../data/interactions.csv')
+                            data.write_csv(INTERACTIONS_FILE)
 
                         data = []
                         t_start = time.time()
@@ -65,9 +79,9 @@ async def collect_messages():
 
 async def calculate_top_recommendations():
     while True:
-        if os.path.exists('../data/interactions.csv'):
+        if os.path.exists(INTERACTIONS_FILE):
             print('calculating top recommendations')
-            interactions = pl.read_csv('../data/interactions.csv')
+            interactions = pl.read_csv(INTERACTIONS_FILE)
             top_items = (
                 interactions
                 .sort('timestamp')

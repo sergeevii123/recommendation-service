@@ -1,0 +1,75 @@
+version: '3'
+
+services:
+  webapp:
+    build: ./webapp
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./webapp/static:/app/static
+    depends_on:
+      recommendation_service:
+        condition: service_healthy
+      event_collector:
+        condition: service_healthy
+
+  recommendation_service:
+    build:
+      context: . # for getting models.py and watched_filer.py
+      dockerfile: ./recommendations/Dockerfile
+    ports:
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  event_collector:
+    build:
+      context: . # for getting models.py and watched_filer.py
+      dockerfile: ./event_collector/Dockerfile
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  regular_pipeline:
+    build: ./regular_pipeline
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: "rabbitmq:management"
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+
+  redis:
+    image: "redis/redis-stack-server"
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 2s
+      retries: 3

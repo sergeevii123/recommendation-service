@@ -8,8 +8,8 @@ from flask import Flask, render_template, session, request
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-recommendation_service_url = "http://135.181.153.151:5001"
-interactions_url = 'http://135.181.153.151:5000'
+recommendation_service_url = "http://recommendation_service:5001"
+interactions_url = 'http://event_collector:5002'
 
 links_data = (
     pl.read_csv('static/links.csv')
@@ -94,4 +94,4 @@ if __name__ == '__main__':
         "item_ids": list(map(str, movie_id_title.keys())),
     }
     requests.post(f'{recommendation_service_url}/add_items', json=data)
-    app.run(debug=True, port=8000)
+    app.run(debug=False, host='0.0.0.0', port=8000)
