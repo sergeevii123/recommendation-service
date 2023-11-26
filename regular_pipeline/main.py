@@ -9,7 +9,18 @@ import polars as pl
 import redis
 from aio_pika import Message
 
-redis_connection = redis.Redis('localhost')
+def get_redis_connection():
+    for _ in range(10):
+        try:
+            redis_connection = redis.Redis('redis')
+        except redis.exceptions.ConnectionError:
+            print('redis is not ready yet')
+            time.sleep(2)
+            continue
+        return redis_connection
+
+
+redis_connection = get_redis_connection()
 
 INTERACTIONS_FILE = 'data/interactions.csv'
 
@@ -58,20 +69,21 @@ async def collect_messages():
                     if time.time() - t_start > 10:
                         print('saving events from rabbitmq')
                         # update data if 10s passed
-                        new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
-                            'item_ids': 'item_id',
-                            'actions': 'action'
-                        })
+                        if len(data) > 0:
+                            new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
+                                'item_ids': 'item_id',
+                                'actions': 'action'
+                            })
 
-                        if len(new_data) > 0:
-                            if os.path.exists(INTERACTIONS_FILE):
-                                data = pl.concat([pl.read_csv(INTERACTIONS_FILE), new_data])
-                            else:
-                                data = new_data
-                            data.write_csv(INTERACTIONS_FILE)
+                            if len(new_data) > 0:
+                                if os.path.exists(INTERACTIONS_FILE):
+                                    data = pl.concat([pl.read_csv(INTERACTIONS_FILE), new_data])
+                                else:
+                                    data = new_data
+                                data.write_csv(INTERACTIONS_FILE)
 
-                        data = []
-                        t_start = time.time()
+                            data = []
+                            t_start = time.time()
 
                     message = json.loads(message)
                     data.append(message)
