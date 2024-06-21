@@ -6,37 +6,23 @@ import time
 import aio_pika
 import aiormq
 import polars as pl
-import redis
 from aio_pika import Message
-
-def get_redis_connection():
-    for _ in range(10):
-        try:
-            redis_connection = redis.Redis('redis')
-        except redis.exceptions.ConnectionError:
-            print('redis is not ready yet')
-            time.sleep(2)
-            continue
-        return redis_connection
-
-
-redis_connection = get_redis_connection()
-
-INTERACTIONS_FILE = 'data/interactions.csv'
+from recs import calculate_top_recommendations, INTERACTIONS_FILE
+import logging
 
 async def get_rabbitmq_connection():
     for _ in range(10):
-        print('trying to connect to rabbitmq')
+        logging.info('trying to connect to rabbitmq')
         try:
             connection = await aio_pika.connect_robust(
                 "amqp://guest:guest@rabbitmq/",
                 loop=asyncio.get_event_loop()
             )
         except aiormq.exceptions.AMQPConnectionError as e:
-            print('rabbitmq is not ready yet')
+            logging.info('rabbitmq is not ready yet')
             await asyncio.sleep(2)
             continue
-        print('rabbitmq is connected')
+        logging.info('rabbitmq is connected')
         return connection
 
 async def collect_messages():
@@ -67,7 +53,7 @@ async def collect_messages():
                 async with message.process():
                     message = message.body.decode()
                     if time.time() - t_start > 10:
-                        print('saving events from rabbitmq')
+                        logging.info('saving events from rabbitmq')
                         # update data if 10s passed
                         if len(data) > 0:
                             new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -89,29 +75,9 @@ async def collect_messages():
                     data.append(message)
 
 
-async def calculate_top_recommendations():
-    while True:
-        if os.path.exists(INTERACTIONS_FILE):
-            print('calculating top recommendations')
-            interactions = pl.read_csv(INTERACTIONS_FILE)
-            top_items = (
-                interactions
-                .sort('timestamp')
-                .unique(['user_id', 'item_id', 'action'], keep='last')
-                .filter(pl.col('action') == 'like')
-                .groupby('item_id')
-                .count()
-                .sort('count', descending=True)
-                .head(100)
-            )['item_id'].to_list()
-
-            top_items = [str(item_id) for item_id in top_items]
-
-            redis_connection.json().set('top_items', '.', top_items)
-        await asyncio.sleep(10)
-
-
 async def main():
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    logging.basicConfig(level=logging.INFO, format=log_format)
     await asyncio.gather(
         collect_messages(),
         calculate_top_recommendations(),
