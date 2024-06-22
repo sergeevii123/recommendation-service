@@ -7,7 +7,7 @@ import aio_pika
 import aiormq
 import polars as pl
 from aio_pika import Message
-from recs import calculate_top_recommendations, INTERACTIONS_FILE
+from recs import calculate_recommendations, INTERACTIONS_FILE
 import logging
 
 async def get_rabbitmq_connection():
@@ -44,7 +44,6 @@ async def collect_messages():
         # Declaring exchange
         exchange = await channel.declare_exchange("user.interact", type='direct')
         await queue.bind(exchange, routing_key)
-        # await exchange.publish(Message(bytes(queue.name, "utf-8")), routing_key)
 
         t_start = time.time()
         data = []
@@ -80,7 +79,7 @@ async def main():
     logging.basicConfig(level=logging.INFO, format=log_format)
     await asyncio.gather(
         collect_messages(),
-        calculate_top_recommendations(),
+        calculate_recommendations(),
     )
 
 

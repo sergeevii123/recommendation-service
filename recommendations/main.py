@@ -60,7 +60,7 @@ def get_recs(user_id: str):
     global unique_item_ids
 
     try:
-        item_ids = redis_connection.json().get('top_items')
+        item_ids = redis_connection.json().get('combined_recommendations')
     except redis.exceptions.ConnectionError:
         item_ids = None
 
