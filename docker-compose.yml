@@ -1,17 +1,6 @@
 version: '3'
 
 services:
-  # webapp:
-  #   build: ./webapp
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - ./webapp/static:/app/static
-  #   depends_on:
-  #     recommendation_service:
-  #       condition: service_healthy
-  #     event_collector:
-  #       condition: service_healthy
 
   recommendation_service:
     build:

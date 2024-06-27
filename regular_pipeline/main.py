@@ -14,6 +14,7 @@ async def get_rabbitmq_connection():
     for _ in range(10):
         logging.info('trying to connect to rabbitmq')
         try:
+            # адрес подтягивается из docker compose файла
             connection = await aio_pika.connect_robust(
                 "amqp://guest:guest@rabbitmq/",
                 loop=asyncio.get_event_loop()
@@ -32,16 +33,12 @@ async def collect_messages():
     routing_key = "user.interact.message"
 
     async with connection:
-        # Creating channel
         channel = await connection.channel()
 
-        # Will take no more than 10 messages in advance
         await channel.set_qos(prefetch_count=10)
 
-        # Declaring queue
         queue = await channel.declare_queue(queue_name)
 
-        # Declaring exchange
         exchange = await channel.declare_exchange("user.interact", type='direct')
         await queue.bind(exchange, routing_key)
 
@@ -51,9 +48,10 @@ async def collect_messages():
             async for message in queue_iter:
                 async with message.process():
                     message = message.body.decode()
+                    # если прошло больше 10 секунд с момента последнего запсис в INTERACTIONS_FILE, то записываем заново
                     if time.time() - t_start > 10:
                         logging.info('saving events from rabbitmq')
-                        # update data if 10s passed
+                        
                         if len(data) > 0:
                             new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
                                 'item_ids': 'item_id',
@@ -77,6 +75,9 @@ async def collect_messages():
 async def main():
     log_format = '%(asctime)s - %(levelname)s - %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_format)
+    # очищаем файл с взаимодействиями с предыдущего запуска
+    if os.path.exists(INTERACTIONS_FILE):
+        os.remove(INTERACTIONS_FILE)
     await asyncio.gather(
         collect_messages(),
         calculate_recommendations(),

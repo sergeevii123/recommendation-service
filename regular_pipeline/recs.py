@@ -26,6 +26,7 @@ def get_redis_connection():
 redis_connection = get_redis_connection()
 
 def calculate_als_recommendations(interactions):
+    """ Вычисляет рекомендации на основе матричной факторизации с помощью ALS."""
     try:
         interactions = interactions.filter(pl.col('action') == 'like')
         user_ids = interactions['user_id'].to_list()
@@ -62,6 +63,7 @@ def calculate_als_recommendations(interactions):
     return top_als_items
 
 def calculate_top_items(interactions):
+    """ Вычисляет топ-100 популярных товаров на основе лайков."""
     top_items = (
         interactions
         .sort('timestamp')
@@ -76,6 +78,7 @@ def calculate_top_items(interactions):
     return top_items
 
 def get_random_items(interactions, exclude_items, count=1):
+    """ Возвращает случайные товары, которые пользователь не видел."""
     all_items = interactions['item_id'].unique().to_list()
     all_items = [str(item) for item in all_items if str(item) not in exclude_items]
     random_items = random.sample(all_items, min(count, len(all_items)))
@@ -95,11 +98,11 @@ async def calculate_recommendations():
             logging.info('calculating recommendations')
             interactions = pl.read_csv(INTERACTIONS_FILE)
 
-            # Calculate top items and ML-based recommendations
+            # Вычисляем рекомендации
             top_items = calculate_top_items(interactions)
             als_items = calculate_als_recommendations(interactions)
 
-            # Combine recommendations
+            # Записываем рекомендации в Redis
             combined_recommendations = combine_recommendations(top_items, als_items, interactions)
 
             logging.debug(f'combined_recommendations: {combined_recommendations}')

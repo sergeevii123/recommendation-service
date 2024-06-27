@@ -22,7 +22,7 @@ exchange = "user.interact"
 _rabbitmq_connection: AbstractRobustConnection = None
 _rabbitmq_exchange = None
 
-# Configure CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,7 +45,6 @@ async def interact(message: InteractEvent):
         content_type="text/json",
     ))
 
-    # watched_filter.add(message.user_id, message.item_id)
     return 200
 
 
@@ -57,16 +56,12 @@ async def create_rabbitmq_exchange() -> AbstractRobustExchange:
             loop=asyncio.get_event_loop()
         )
 
-        # Creating channel
         channel = await _rabbitmq_connection.channel()
 
-        # Declaring exchange
         _rabbitmq_exchange = await channel.declare_exchange("user.interact", type='direct')
 
-        # Declaring queue
         queue = await channel.declare_queue(queue_name)
 
-        # Binding queue
         await queue.bind(_rabbitmq_exchange, routing_key)
     return _rabbitmq_exchange
 
