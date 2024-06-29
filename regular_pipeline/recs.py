@@ -5,109 +5,156 @@ import os
 import polars as pl
 import logging
 import numpy as np
-from implicit.als import AlternatingLeastSquares
-from scipy.sparse import coo_matrix
+from scipy.sparse import coo_matrix, csr_matrix
 from sklearn.preprocessing import LabelEncoder
 import random
+from lightfm import LightFM
 
-random.seed(42)
+RANDOM_STATE = 42
+TOP_K = 10
+random.seed(RANDOM_STATE)
 INTERACTIONS_FILE = 'data/interactions.csv'
 
 def get_redis_connection():
     for _ in range(10):
         try:
-            redis_connection = redis.Redis('redis')
+            redis_connection = redis.Redis(host='redis', decode_responses=True)
+            return redis_connection
         except redis.exceptions.ConnectionError:
-            logging.info('redis is not ready yet')
+            logging.info('Redis is not ready yet')
             time.sleep(2)
-            continue
-        return redis_connection
+    raise Exception("Failed to connect to Redis")
 
 redis_connection = get_redis_connection()
 
-def calculate_als_recommendations(interactions):
-    """ Вычисляет рекомендации на основе матричной факторизации с помощью ALS."""
+
+def build_user_item_matrix(interactions):
+    """ Строит user-item матрицу из датафрейма взаимодействий"""
+    rows, cols, values = [], [], []
+    for row in interactions.iter_rows(named=True):
+        user_id = row['user_id_encoded']
+        item_id = row['item_id_encoded']
+        action = row['action']
+        rows.append(user_id)
+        cols.append(item_id)
+        values.append(1 if action == 'like' else -1)
+    user_item_data = csr_matrix((values, (rows, cols)), dtype=np.float32)
+    return user_item_data
+
+def calculate_lightfm_model(user_item_data):
+    """ Вычисляет модель LightFM на основе user-item матрицы """
     try:
-        interactions = interactions.filter(pl.col('action') == 'like')
-        user_ids = interactions['user_id'].to_list()
-        item_ids = interactions['item_id'].to_list()
-
-        # Encode user_ids and item_ids as integers
-        user_encoder = LabelEncoder()
-        item_encoder = LabelEncoder()
-        user_ids_encoded = user_encoder.fit_transform(user_ids)
-        item_ids_encoded = item_encoder.fit_transform(item_ids)
-
-        data = [1] * len(user_ids)  # implicit feedback, binary likes
-
-        user_item_matrix = coo_matrix((data, (user_ids_encoded, item_ids_encoded)))
-
-        model = AlternatingLeastSquares(factors=20, regularization=0.1, iterations=20)
-        model.fit(user_item_matrix.T)
-
-        item_factors = model.item_factors
-        user_factors = model.user_factors
-
-        scores = np.dot(user_factors, item_factors.T)
-        top_als_items = np.argsort(scores.sum(axis=0))[::-1][:10]  # Limit to top 10 items
-
-        # Filter out items that were not seen during the fit process
-        seen_labels = set(item_encoder.classes_)
-        top_als_items = [item for item in top_als_items if item in seen_labels]
-
-        top_als_items = item_encoder.inverse_transform(top_als_items)  # Decode to original item_ids
-        top_als_items = [str(item_id) for item_id in top_als_items]
+        model = LightFM(
+            no_components=38,
+            loss='warp',
+            item_alpha=8.551911304867999e-05,
+            user_alpha=8.551911304867999e-05,
+            random_state=RANDOM_STATE,
+        )
+        model.fit(user_item_data, epochs=13, verbose=True)
+        return model
     except Exception as e:
-        logging.error(f'Error calculating ALS recommendations: {e}')
-        top_als_items = []
-    return top_als_items
+        logging.error(f'Error calculating LightFM model: {e}')
+        return None
 
-def calculate_top_items(interactions):
-    """ Вычисляет топ-100 популярных товаров на основе лайков."""
-    top_items = (
-        interactions
-        .sort('timestamp')
-        .unique(['user_id', 'item_id', 'action'], keep='last')
-        .filter(pl.col('action') == 'like')
-        .groupby('item_id')
-        .count()
-        .sort('count', descending=True)
-        .head(100)
-    )['item_id'].to_list()
-    top_items = [str(item_id) for item_id in top_items]
-    return top_items
+def get_recommendations(model, user_item_data, user_ids, k=TOP_K):
+    """ Возвращает топ k рекомендаций для пользователей на основе модели LightFM"""
+    n_users, n_items = user_item_data.shape
+    recommendations = []
+    for user_id in user_ids:
+        scores = model.predict(user_id, np.arange(n_items))
+        top_items = np.argsort(-scores)[:k]
+        recommendations.append(top_items)
+    return recommendations
 
-def get_random_items(interactions, exclude_items, count=1):
-    """ Возвращает случайные товары, которые пользователь не видел."""
+
+async def calculate_top_items(interactions):
+    """Записывает в редис топ 20 айтемов по количеству лайков"""
+    try:
+        top_items = (
+            interactions
+            .sort('timestamp')
+            .unique(['user_id', 'item_id', 'action'], keep='last')
+            .filter(pl.col('action') == 'like')
+            .groupby('item_id')
+            .count()
+            .sort('count', descending=True)
+            .head(TOP_K)
+        )['item_id'].to_list()
+        top_items = [str(item_id) for item_id in top_items]
+        redis_connection.json().set('top_items', '.', top_items)
+    except Exception as e:
+        logging.error(f'Error calculating top items: {e}')
+
+
+def get_unseen_random_items(interactions, exclude_items, count=1):
+    """Возвращает случайные айтемы, которые пользователь еще не видел"""
     all_items = interactions['item_id'].unique().to_list()
     all_items = [str(item) for item in all_items if str(item) not in exclude_items]
     random_items = random.sample(all_items, min(count, len(all_items)))
     return random_items
 
-def combine_recommendations(top_items, als_items, interactions, max_recommendations=10):
-    combined_recommendations = als_items
-    if len(combined_recommendations) < max_recommendations:
-        combined_recommendations += [item for item in top_items if item not in combined_recommendations]
-    combined_recommendations = combined_recommendations[:max_recommendations-1]  # Reserve last slot for random item
-    combined_recommendations += get_random_items(interactions, combined_recommendations, 1)
-    return combined_recommendations
 
-async def calculate_recommendations():
+async def update_unseen_random_items(interactions):
+    """Записывает в редис для каждого пользователя 10 случайных непросмотренных айтемов """
+    try:
+        user_ids = interactions['user_id'].unique().to_list()
+        for user_id in user_ids:
+            seen_items = interactions.filter(pl.col('user_id') == user_id)['item_id'].unique().to_list()
+            random_items = get_unseen_random_items(interactions, seen_items, count=TOP_K)
+            redis_connection.json().set(f'unseen_random_items:{user_id}', '.', random_items)
+    except Exception as e:
+        logging.error(f'Error updating random items: {e}')
+
+
+async def calculate_lightfm_recommendations(interactions):
+    """Записывает в редис рекомендации для всех пользователей на основе LightFM"""
+    try:
+        user_encoder = LabelEncoder()
+        item_encoder = LabelEncoder()
+
+        user_ids_encoded = user_encoder.fit_transform(interactions['user_id'].to_list())
+        item_ids_encoded = item_encoder.fit_transform(interactions['item_id'].to_list())
+
+        interactions = interactions.with_columns([
+            pl.Series('user_id_encoded', user_ids_encoded).cast(pl.Int32),
+            pl.Series('item_id_encoded', item_ids_encoded).cast(pl.Int32)
+        ])
+
+        user_item_data = build_user_item_matrix(interactions)
+        model = calculate_lightfm_model(user_item_data)
+        if model is not None:
+            recs = get_recommendations(model, user_item_data, interactions['user_id_encoded'].unique().to_list(), TOP_K)
+            user_ids = interactions['user_id'].unique().to_list()
+            for user_idx, user_id in enumerate(user_ids):
+                try:
+                    top_items_indices = recs[user_idx]
+                    top_item_ids = item_encoder.inverse_transform(top_items_indices)
+                    top_item_ids_str = [str(item_id) for item_id in top_item_ids]
+                    redis_connection.json().set(f'lightfm_recommendations:{user_id}', '.', top_item_ids_str)
+                except Exception as e:
+                    logging.error(f'Error processing recommendations for user {user_id}: {e}')
+    except Exception as e:
+        logging.error(f'Error in calculate_lightfm_recommendations: {e}')
+
+
+async def periodic_task(task_func, sleep_time):
+    """ Функция для запуска периодической задачи"""
     while True:
         if os.path.exists(INTERACTIONS_FILE):
-            logging.info('calculating recommendations')
             interactions = pl.read_csv(INTERACTIONS_FILE)
+            logging.info(f'Running task: {task_func.__name__} len interactions {len(interactions)}')
+            await task_func(interactions)
+            logging.info(f'Task {task_func.__name__} completed')
+        await asyncio.sleep(sleep_time)
 
-            # Вычисляем рекомендации
-            top_items = calculate_top_items(interactions)
-            als_items = calculate_als_recommendations(interactions)
 
-            # Записываем рекомендации в Redis
-            combined_recommendations = combine_recommendations(top_items, als_items, interactions)
-
-            logging.debug(f'combined_recommendations: {combined_recommendations}')
-            redis_connection.json().set('combined_recommendations', '.', combined_recommendations)
-        await asyncio.sleep(10)
+async def calculate_recommendations():
+    await asyncio.gather(
+        periodic_task(calculate_top_items, 5), 
+        periodic_task(calculate_lightfm_recommendations, 30),
+        periodic_task(update_unseen_random_items, 5) 
+    )
 
 if __name__ == '__main__':
     log_format = '%(asctime)s - %(levelname)s - %(message)s'

@@ -14,3 +14,4 @@ numpy==1.24.3
 aio-pika==9.3.0
 implicit==0.7.2
 scikit-learn==1.5.0
+lightfm==1.17
