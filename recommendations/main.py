@@ -36,6 +36,10 @@ RECOMMENDATION_SOURCE = Counter('recommendation_source', 'Source of recommendati
 ERROR_COUNT = Counter('error_count', 'App Error Count', ['endpoint'])
 REQUEST_LATENCY = Histogram('request_latency_seconds', 'Request latency', ['endpoint'])
 
+ENABLE_LIGHTFM_RECS = True
+ENABLE_UNSEEN_RANDOM_RECS = True
+ENABLE_TOP_RECS = True
+
 @app.get('/metrics')
 def metrics():
     return generate_latest()
@@ -66,7 +70,7 @@ def add_movie(request: NewItemsEvent):
     return 200
 
 def add_unseen_random_items(item_ids: List[str], unseen_random_items: List[str], source:str):
-    if unseen_random_items:
+    if unseen_random_items and ENABLE_UNSEEN_RANDOM_RECS:
         starting_size = len(item_ids)
         item_ids.extend(unseen_random_items[:TOP_K-starting_size])
         source += f'Random unseen {TOP_K-starting_size} '
@@ -92,12 +96,12 @@ def get_recs(user_id: str):
 
         item_ids = []
         source = ''
-        if lightfm_items:
+        if lightfm_items and ENABLE_LIGHTFM_RECS:
             item_ids.extend(lightfm_items[:TOP_K-2])
             source += f'LightFM {len(item_ids)} '
             RECOMMENDATION_SOURCE.labels(source='LightFM').inc(len(item_ids))
             item_ids, source = add_unseen_random_items(item_ids, unseen_random_items, source)
-        elif top_items:
+        elif top_items and ENABLE_TOP_RECS:
             item_ids.extend(top_items[:TOP_K//2])
             source += f'TOP {len(item_ids)} '
             RECOMMENDATION_SOURCE.labels(source='TOP').inc(len(item_ids))
