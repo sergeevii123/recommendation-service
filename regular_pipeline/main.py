@@ -10,6 +10,7 @@ from aio_pika import Message
 from recs import calculate_recommendations, INTERACTIONS_FILE
 import logging
 
+
 async def get_rabbitmq_connection():
     for _ in range(10):
         logging.info('trying to connect to rabbitmq')
@@ -25,6 +26,7 @@ async def get_rabbitmq_connection():
             continue
         logging.info('rabbitmq is connected')
         return connection
+
 
 async def collect_messages():
     connection = await get_rabbitmq_connection()
@@ -51,7 +53,7 @@ async def collect_messages():
                     # если прошло больше 10 секунд с момента последнего запсис в INTERACTIONS_FILE, то записываем заново
                     if time.time() - t_start > 10:
                         logging.info('saving events from rabbitmq')
-                        
+
                         if len(data) > 0:
                             new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
                                 'item_ids': 'item_id',
