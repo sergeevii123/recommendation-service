@@ -1,8 +1,16 @@
-# Запус проекта
+# Recommendation service
 
-1. Установить docker и docker compose
-2. Из корня проекта выполнить команду `docker compose up --build -d` 
-3. После билда имаджей docker их запустит и проверит состояние. Пример состояния:
+## Description
+Service for collecting user likes/dislikes and returning recommendations based on this data.
+`/interact` - gives like/dislike to item for user
+`/add_items` - adss new items to recommendations
+`/recs/{user_id}` - asks for recommendations for user
+
+## Starting project
+
+1. Install docker, docker compose
+2. From root of project `docker compose up --build -d` 
+3. Adter build docker will create containers and start them
 ```
   ✔ Network recommendation_system_default                     Created                                                                                                                                                                                            0.1s
  ✔ Container recommendation_system-prometheus-1              Started                                                                                                                                                                                            0.1s
@@ -13,17 +21,20 @@
  ✔ Container recommendation_system-event_collector-1         Started                                                                                                                                                                                            0.1s
  ✔ Container recommendation_system-regular_pipeline-1        Started
  ```
-4. Сабмитим адрес вашей машины в задание
-5. Логи всей сборки можно смотреть через `docker compose logs -f`
 
-# Структура проекта
-* event_collector - сервис для сбора событий, обрабатывает вызов `/interact` на порту 5000 и пишет события в очередь rabbitmq
-* regular_pipeline - раз в 10 секунд читает события из редиса и записывает их в INTERACTIONS_FILE
-    * recs.py - главный скрипт рекомендаций регулярно вычисляет рекомендации и записывает их в редис
+# Structure
+* event_collector - service for collecting calls to `/interact` - likes/dislikes of items for user and saving them to rabbitmq
+* regular_pipeline - once in 10 seconds reads data from rabibtimq and writes them to INTERACTIONS_FILE
+    * recs.py - main script that reads interactions, calculates recomendations and writes them to redis so later they could be returned to user
 * recommendations 
-    * /healthcheck возвращает статус сервиса
-    * /cleanup производит сброс окружения перед новым запуском грейдера
-    * /add_items добавляет в систему новые объекты рекомендации 
-    * /recs/{user_id} читает рекомендации из редиса, если нет - то возвращает рандомные, также в 5% случаев возваращает рандомные, даже если есть рекомендации (чтобы улучшить разнообразие)
-* grafana - визуализация метрик, откройте в браузере http://адрес вашей виртуалки:3000/ и введите логин/пароль admin/admin, дальше найдите там recommendation-service-dashboard в дашбордах
+    * `/healthcheck` checks that all services are up
+    * `/cleanup` cleans up all data for fresh start
+    * `/add_items` adds new objects to recomendations
+    * `/recs/{user_id}` reads recommendations from redis if there is no recs - return random items 
+* grafana - metrics of the system open http://localhost:3000/ default user/pass admin/admin
 
+# Example of working service
+
+![example of working service](imgs/example_work_of_service.jpeg)
+
+Here we first return random + top items while accumulating data for new users. Then we return LightFM recommendations based on recorded data when users return to service if we don't have recs then it's random + top items again. Also we add a small percentage of unseen items to recommendations to explore potential likes of user.
