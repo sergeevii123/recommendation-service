@@ -2,9 +2,9 @@
 
 ## Description
 Service for collecting user likes/dislikes and returning recommendations based on this data.
-`/interact` - gives like/dislike to item for user
-`/add_items` - adss new items to recommendations
-`/recs/{user_id}` - asks for recommendations for user
+* `/interact` - gives like/dislike to item for user
+* `/add_items` - adss new items to recommendations
+* `/recs/{user_id}` - asks for recommendations for user
 
 ## Starting project
 
